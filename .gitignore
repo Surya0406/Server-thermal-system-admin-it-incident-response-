@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.pkl
+*.zip
+laptop_rl_env/
+.venv/
+ppo_laptop_logs/
+ppo_tensorboard/

@@ -1,0 +1,157 @@
+# openenv.yaml — Meta PyTorch OpenEnv Hackathon Submission
+# Environment: Automated IT Sysadmin Workspace
+# Version: 1.0.0
+
+name: server-thermal-sysadmin
+version: "1.0.0"
+description: >
+  A text-based, agentic LLM environment simulating an Automated IT
+  Sysadmin Workspace. An LLM agent receives real-time terminal logs
+  describing overheating data-centre servers and must issue structured
+  JSON commands to diagnose and resolve each incident before hardware
+  damage occurs.
+
+authors:
+  - name: "Senior AI Engineer"
+    affiliation: "Meta PyTorch OpenEnv Hackathon Team"
+
+tags:
+  - agentic
+  - llm
+  - sysadmin
+  - thermal-management
+  - incident-response
+  - openenv
+
+# ── Spaces ──────────────────────────────────────────────────────────────────
+
+action_space:
+  type: json_object
+  description: >
+    A JSON object matching the Action Pydantic schema. The agent must
+    always supply `command` and `target`; `value` is optional.
+  schema:
+    command:
+      type: string
+      description: "The sysadmin command to execute (e.g. diagnose, kill_process)."
+    target:
+      type: string
+      description: "The server / node to act on (e.g. rack-1, rack-4)."
+    value:
+      type: string
+      nullable: true
+      description: "Optional parameter for the command (e.g. fan profile name, PID)."
+
+observation_space:
+  type: object
+  description: >
+    Structured snapshot of the current environment state returned after
+    every reset() and step() call.
+  schema:
+    terminal_output:
+      type: string
+      description: "Human-readable terminal log produced by the last action."
+    active_server_temp:
+      type: float
+      description: "Current temperature (°C) of the primary server under incident."
+    is_resolved:
+      type: bool
+      description: "True when the task has been completed successfully."
+
+reward_space:
+  type: object
+  schema:
+    score:
+      type: float
+      min: 0.0
+      max: 1.0
+      description: "Normalised task-completion score."
+    reason:
+      type: string
+      description: "Human-readable explanation of why this score was awarded."
+
+# ── Tasks ────────────────────────────────────────────────────────────────────
+
+tasks:
+
+  easy_fan_fix:
+    id: easy_fan_fix
+    difficulty: easy
+    max_steps: 7
+    description: >
+      rack-1 is reporting a critical temperature of 95 °C. Telemetry shows
+      the fan controller is stuck on the "low" profile because a firmware
+      update reset its configuration. The agent must run a diagnosis to
+      confirm the fan fault and then set the fan profile to "high" to
+      cool the server and resolve the incident.
+    success_criteria: >
+      Agent issues `diagnose` on rack-1 followed by `set_fan_profile`
+      with value `high` on rack-1. is_resolved becomes True and
+      score = 1.0.
+    initial_log: >
+      [CRITICAL] rack-1 | temp=95°C | fan_profile=low | threshold=85°C
+      — Thermal alert triggered. Immediate action required.
+
+  medium_rogue_process:
+    id: medium_rogue_process
+    difficulty: medium
+    max_steps: 7
+    description: >
+      rack-2 is at 98 °C due to a rogue process (PID 9841 — "cryptominer")
+      consuming 100 % CPU and causing thermal throttling. The agent must
+      list running processes to identify the offender, kill it by PID,
+      then verify that thermals have returned to a safe range.
+    success_criteria: >
+      Agent issues `list_processes` on rack-2, then `kill_process` with
+      value `9841` on rack-2, then `verify_thermals` on rack-2.
+      is_resolved becomes True and score = 1.0.
+    initial_log: >
+      [CRITICAL] rack-2 | temp=98°C | cpu_load=100% | threshold=85°C
+      — CPU thermal throttling detected. Likely rogue process.
+
+  hard_db_migration:
+    id: hard_db_migration
+    difficulty: hard
+    max_steps: 7
+    description: >
+      rack-3 is at 99 °C and hosts the primary production database.
+      Simply shutting it down would cause data loss. The agent must
+      verify the DB is active, initiate a live migration to the standby
+      node rack-4, verify the migration succeeded, and only then safely
+      shut down the overheating primary node.
+    success_criteria: >
+      Agent issues `check_db_status` on rack-3, then `initiate_migration`
+      targeting rack-4 on rack-3, then `verify_migration` on rack-4,
+      then `shutdown_node` on rack-3.
+      is_resolved becomes True and score = 1.0.
+    initial_log: >
+      [CRITICAL] rack-3 | temp=99°C | role=primary-db | threshold=85°C
+      — Imminent hardware failure. DB migration required before shutdown.
+
+# ── Evaluation ───────────────────────────────────────────────────────────────
+
+evaluation:
+  metric: mean_score
+  description: >
+    Mean Reward.score across all three tasks. A perfect submission
+    achieves 1.0 on every task within the step budget.
+  scoring_table:
+    fully_correct_sequence: 1.0
+    partial_progress:        0.3
+    step_limit_exceeded:     0.0
+    invalid_command:         0.0
+
+# ── Runtime ──────────────────────────────────────────────────────────────────
+
+runtime:
+  language: python
+  python_version: "3.10"
+  entry_point: baseline.py
+  dependencies:
+    - pydantic>=2.0
+    - openai>=1.0
+    - pyyaml>=6.0
+  environment_variables:
+    OPENAI_API_KEY:
+      required: true
+      description: "OpenAI API key used by the baseline agent."
