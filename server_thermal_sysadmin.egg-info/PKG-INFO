@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: server-thermal-sysadmin
+Version: 1.0.0
+Summary: Meta PyTorch OpenEnv Hackathon Submission
+Requires-Python: >=3.10
+Requires-Dist: pydantic
+Requires-Dist: openai
+Requires-Dist: python-dotenv
+Requires-Dist: fastapi
+Requires-Dist: uvicorn
+Requires-Dist: openenv-core>=0.2.0

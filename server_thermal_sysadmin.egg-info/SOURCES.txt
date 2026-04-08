@@ -1,0 +1,10 @@
+README.md
+laptop_env.py
+pyproject.toml
+server/app.py
+server_thermal_sysadmin.egg-info/PKG-INFO
+server_thermal_sysadmin.egg-info/SOURCES.txt
+server_thermal_sysadmin.egg-info/dependency_links.txt
+server_thermal_sysadmin.egg-info/entry_points.txt
+server_thermal_sysadmin.egg-info/requires.txt
+server_thermal_sysadmin.egg-info/top_level.txt

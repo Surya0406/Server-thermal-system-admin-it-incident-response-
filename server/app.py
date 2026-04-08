@@ -126,11 +126,9 @@ async def root() -> Dict[str, Any]:
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+def main():
+    import uvicorn
+    uvicorn.run("server.app:app", host="0.0.0.0", port=7860)
+
 if __name__ == "__main__":
-    uvicorn.run(
-        "server:app",
-        host="0.0.0.0",
-        port=7860,          # HuggingFace Spaces default port
-        log_level="info",
-        reload=False,
-    )
+    main()

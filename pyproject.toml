@@ -17,4 +17,10 @@ dependencies = [
 ]
 
 [project.scripts]
-openenv-server = "server.app:app"
+server = "server.app:main"
+
+[tool.setuptools]
+py-modules = ["laptop_env"]
+
+[tool.setuptools.packages.find]
+include = ["server*"]
