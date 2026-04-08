@@ -141,6 +141,13 @@ def run_agent(task_id: str, client: OpenAI) -> None:
     print(f"[END] success={str(success).lower()} steps={step} score={final_score:.3f} rewards={rewards_str}", flush=True)
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Inference Agent")
+    parser.add_argument("--task", type=str, default="all", help="Task to run")
+    parser.add_argument("--model", type=str, default=MODEL_NAME, help="Model to use")
+    parser.add_argument("--quiet", action="store_true", help="Quiet mode")
+    args = parser.parse_args()
+
     if not HF_TOKEN:
         print("[WARNING] HF_TOKEN is not set. Inference will fail if not using a local server.")
         
@@ -150,6 +157,10 @@ if __name__ == "__main__":
         
     client = OpenAI(**client_kwargs)
     
-    tasks = ["easy_fan_fix", "medium_rogue_process", "hard_db_migration"]
+    if args.task == "all":
+        tasks = ["easy_fan_fix", "medium_rogue_process", "hard_db_migration"]
+    else:
+        tasks = [args.task]
+        
     for t in tasks:
         run_agent(t, client)
