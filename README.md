@@ -1,3 +1,12 @@
+---
+title: Server Thermal Sysadmin
+emoji: 🚀
+colorFrom: red
+colorTo: yellow
+sdk: docker
+pinned: false
+---
+
 # 🖥️ Server Thermal Sysadmin — Automated IT Incident Response
 
 > **Meta PyTorch OpenEnv Hackathon Submission**
