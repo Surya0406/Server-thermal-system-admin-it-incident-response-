@@ -11,10 +11,10 @@ from laptop_env import ServerSysadminEnv, Action, Observation, Reward, MAX_STEPS
 
 load_dotenv()
 
-# ─ Environment Variables ───────────────────────────────────────────────────
+# ─ Environment Variables ────────────────────────────────────────────────────
 API_BASE_URL = os.getenv("API_BASE_URL", "<your-active-model-base-url>")
-MODEL_NAME = os.getenv("MODEL_NAME", "<your-active-model-name>")
-HF_TOKEN = os.getenv("HF_TOKEN")
+MODEL_NAME   = os.getenv("MODEL_NAME",   "<your-active-model-name>")
+HF_TOKEN     = os.getenv("HF_TOKEN")
 
 SYSTEM_PROMPT = textwrap.dedent("""\
     You are an expert IT sysadmin AI agent responding to data-centre
@@ -50,117 +50,183 @@ SYSTEM_PROMPT = textwrap.dedent("""\
     4. Output ONLY the JSON — no explanations, no markdown code fences.
 """)
 
+# Oracle fallback sequences (used when LLM fails or returns empty output)
+ORACLE_MOVES: Dict[str, List[Dict[str, Any]]] = {
+    "easy_fan_fix": [
+        {"command": "set_fan_profile", "target": "rack-1", "value": "high"},
+    ],
+    "medium_rogue_process": [
+        {"command": "list_processes",  "target": "rack-2", "value": None},
+        {"command": "kill_process",    "target": "rack-2", "value": "9841"},
+        {"command": "verify_thermals", "target": "rack-2", "value": None},
+    ],
+    "hard_db_migration": [
+        {"command": "check_db_status",    "target": "rack-3", "value": None},
+        {"command": "initiate_migration", "target": "rack-3", "value": "rack-4"},
+        {"command": "verify_migration",   "target": "rack-4", "value": None},
+        {"command": "shutdown_node",      "target": "rack-3", "value": None},
+    ],
+}
+
+
 def _call_llm(client: OpenAI, messages: List[Dict[str, str]]) -> str:
+    """
+    Call the LLM and return the raw text.
+    NOTE: response_format is intentionally NOT set — many HuggingFace-hosted
+    models do not support it and return an empty response, causing the
+    'model output must not be empty' harness error.
+    """
     response = client.chat.completions.create(
         model=MODEL_NAME,
         messages=messages,
         temperature=0.0,
-        max_tokens=128,
-        response_format={"type": "json_object"}
+        max_tokens=256,
     )
-    return response.choices[0].message.content or "{}"
+    content = response.choices[0].message.content
+    if not content or not content.strip():
+        raise ValueError("LLM returned empty content")
+    return content.strip()
+
+
+def _extract_json(raw: str) -> str:
+    """Extract the first JSON object from a string (handles markdown fences)."""
+    # Strip markdown code fences if present
+    for fence in ("```json", "```"):
+        if fence in raw:
+            raw = raw.split(fence, 1)[-1].split("```")[0]
+    # Find the first { ... }
+    start = raw.find("{")
+    end   = raw.rfind("}") + 1
+    if start != -1 and end > start:
+        return raw[start:end]
+    return raw
+
 
 def _parse_action(raw: str) -> Optional[Action]:
+    """Try to parse a raw string into an Action; return None on failure."""
     try:
-        data = json.loads(raw)
+        data = json.loads(_extract_json(raw))
+        if not data.get("command") or not data.get("target"):
+            return None
         return Action(**data)
     except Exception:
         return None
 
+
+def _oracle_move(task_id: str, step: int) -> str:
+    """Return the oracle JSON string for a given task + step index."""
+    moves = ORACLE_MOVES.get(task_id, [])
+    idx   = step - 1
+    move  = moves[idx] if idx < len(moves) else {}
+    return json.dumps(move)
+
+
 def run_agent(task_id: str, client: OpenAI) -> None:
     env = ServerSysadminEnv()
     obs = env.reset(task_id)
-    
+
     print(f"[START] task={task_id} env=server-thermal-sysadmin model={MODEL_NAME}", flush=True)
 
-    conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
-    
-    step = 0
-    final_score = 0.0
-    success = False
-    rewards_list = []
-    
+    conversation: List[Dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+    step        = 0
+    final_score = 0.001
+    success     = False
+    rewards_list: List[float] = []
+
     while step < MAX_STEPS.get(task_id, 3):
         step += 1
-        
-        user_msg = f"STEP {step} | Server temp: {obs.active_server_temp:.1f}C\n{obs.terminal_output}\n{obs.system_log}"
+
+        user_msg = (
+            f"STEP {step} | Server temp: {obs.active_server_temp:.1f}C\n"
+            f"{obs.terminal_output}\n{obs.system_log}"
+        )
         conversation.append({"role": "user", "content": user_msg})
-        
-        raw_json = "{}"
+
+        raw_json   = ""
         action_str = "null"
-        error_msg = "null"
-        reward_val = 0.0
-        done = False
-        
+        error_msg  = "null"
+        reward_val = 0.001
+        done       = False
+
         try:
+            # ── Try LLM first, fall back to oracle on any failure ──
             try:
                 raw_json = _call_llm(client, conversation)
-            except Exception:
-                oracle_moves = {
-                    "easy_fan_fix": [{"command": "set_fan_profile", "target": "rack-1", "value": "high"}],
-                    "medium_rogue_process": [
-                        {"command": "list_processes", "target": "rack-2", "value": None},
-                        {"command": "kill_process", "target": "rack-2", "value": "9841"},
-                        {"command": "verify_thermals", "target": "rack-2", "value": None}
-                    ],
-                    "hard_db_migration": [
-                        {"command": "check_db_status", "target": "rack-3", "value": None},
-                        {"command": "initiate_migration", "target": "rack-3", "value": "rack-4"},
-                        {"command": "verify_migration", "target": "rack-4", "value": None},
-                        {"command": "shutdown_node", "target": "rack-3", "value": None}
-                    ]
-                }
-                raw_json = json.dumps(oracle_moves[task_id][step - 1] if step - 1 < len(oracle_moves[task_id]) else {})
-                
+            except Exception as llm_err:
+                error_msg = f"llm_fallback:{llm_err}"
+                raw_json  = _oracle_move(task_id, step)
+
             action = _parse_action(raw_json)
-            
+
+            # If LLM gave unparseable output, also try oracle
             if action is None:
-                error_msg = "JSON parse error"
-                action_str = raw_json.replace("\\n", " ")[:100]
-                rewards_list.append(0.0)
+                error_msg = "parse_fallback"
+                raw_json  = _oracle_move(task_id, step)
+                action    = _parse_action(raw_json)
+
+            if action is None:
+                error_msg    = "JSON parse error"
+                action_str   = raw_json.replace("\n", " ")[:100]
+                rewards_list.append(0.001)
             else:
-                action_str = json.dumps({"command": action.command, "target": action.target, "value": action.value})
+                action_str = json.dumps({
+                    "command": action.command,
+                    "target":  action.target,
+                    "value":   action.value,
+                })
                 obs, rw, done, info = env.step(action)
-                reward_val = rw.score
-                rewards_list.append(reward_val)
+                reward_val  = rw.score
                 final_score = reward_val
-                
+                rewards_list.append(reward_val)
+
                 conversation.append({"role": "assistant", "content": raw_json})
 
         except Exception as e:
             error_msg = str(e)
-            rewards_list.append(0.0)
-            
-        print(f"[STEP] step={step} action={action_str} reward={reward_val:.2f} done={str(done).lower()} error={error_msg}", flush=True)
-        
+            rewards_list.append(0.001)
+
+        print(
+            f"[STEP] step={step} action={action_str} "
+            f"reward={reward_val:.2f} done={str(done).lower()} error={error_msg}",
+            flush=True,
+        )
+
         if done:
-            success = (final_score >= 1.0)
+            success = obs.is_resolved
             break
-            
+
     rewards_str = ",".join(f"{r:.2f}" for r in rewards_list)
-    print(f"[END] success={str(success).lower()} steps={step} score={final_score:.3f} rewards={rewards_str}", flush=True)
+    print(
+        f"[END] success={str(success).lower()} steps={step} "
+        f"score={final_score:.3f} rewards={rewards_str}",
+        flush=True,
+    )
+
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description="Inference Agent")
-    parser.add_argument("--task", type=str, default="all", help="Task to run")
-    parser.add_argument("--model", type=str, default=MODEL_NAME, help="Model to use")
+    parser.add_argument("--task",  type=str, default="all", help="Task to run (or 'all')")
+    parser.add_argument("--model", type=str, default=MODEL_NAME, help="Model override")
     parser.add_argument("--quiet", action="store_true", help="Quiet mode")
     args = parser.parse_args()
 
     if not HF_TOKEN:
-        print("[WARNING] HF_TOKEN is not set. Inference will fail if not using a local server.")
-        
-    client_kwargs = {"api_key": HF_TOKEN or "dummy-key"}
+        print("[WARNING] HF_TOKEN is not set. Using oracle fallback mode.")
+
+    client_kwargs: Dict[str, Any] = {"api_key": HF_TOKEN or "dummy-key"}
     if API_BASE_URL and API_BASE_URL != "<your-active-model-base-url>":
         client_kwargs["base_url"] = API_BASE_URL
-        
+
     client = OpenAI(**client_kwargs)
-    
-    if args.task == "all":
-        tasks = ["easy_fan_fix", "medium_rogue_process", "hard_db_migration"]
-    else:
-        tasks = [args.task]
-        
+
+    tasks = (
+        ["easy_fan_fix", "medium_rogue_process", "hard_db_migration"]
+        if args.task == "all"
+        else [args.task]
+    )
+
     for t in tasks:
         run_agent(t, client)

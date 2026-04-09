@@ -1,27 +1,27 @@
 """
-server.py — ServerSysadminEnv REST API
-=======================================
-FastAPI server that wraps ServerSysadminEnv and exposes it as a
-stateful REST API for the OpenEnv benchmark harness.
+server/app.py — ServerSysadminEnv REST API
+==========================================
+FastAPI server wrapping ServerSysadminEnv for the OpenEnv benchmark harness.
 
 Endpoints
 ---------
-POST /reset          { "task_id": "easy_fan_fix" }   → Observation
-POST /step           Action JSON                       → StepResult
-GET  /state                                           → Observation
-GET  /health                                          → {"status": "ok"}
+GET  /health         → {"status": "ok"}
+POST /reset          {"task_id": "easy_fan_fix"}  → Observation
+POST /step           Action JSON                   → StepResult
+GET  /state                                        → Observation
+GET  /               → env info
 
-The /reset endpoint also accepts an empty body {} (for the
-OpenEnv validation ping that sends POST /reset with body {}).
+Entry point (used by [project.scripts] in pyproject.toml):
+    server = "server.app:main"
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Tuple
+import os
+from typing import Any, Dict, Optional
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from laptop_env import (
@@ -103,17 +103,20 @@ async def step(action: Action) -> StepResult:
 @app.get("/state", response_model=Observation)
 async def state() -> Observation:
     """Return the current Observation without advancing the environment."""
-    return _env.state()
+    try:
+        return _env.state()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.get("/")
 async def root() -> Dict[str, Any]:
     """Root endpoint — basic info about the environment."""
     return {
-        "name":        "server-thermal-sysadmin",
-        "version":     "1.0.0",
-        "tasks":       ["easy_fan_fix", "medium_rogue_process", "hard_db_migration"],
-        "max_steps":   MAX_STEPS,
+        "name":      "server-thermal-sysadmin",
+        "version":   "1.0.0",
+        "tasks":     ["easy_fan_fix", "medium_rogue_process", "hard_db_migration"],
+        "max_steps": MAX_STEPS,
         "endpoints": {
             "reset":  "POST /reset   body: {task_id: str}",
             "step":   "POST /step    body: Action JSON",
@@ -126,9 +129,21 @@ async def root() -> Dict[str, Any]:
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
-def main():
-    import uvicorn
-    uvicorn.run("server.app:app", host="0.0.0.0", port=7860)
+def main() -> None:
+    """
+    Start the uvicorn server.
+    Called by the [project.scripts] entry point: server = "server.app:main"
+    """
+    host = os.environ.get("HOST", "0.0.0.0")
+    port = int(os.environ.get("PORT", "7860"))
+    uvicorn.run(
+        "server.app:app",
+        host=host,
+        port=port,
+        reload=False,
+        log_level="info",
+    )
+
 
 if __name__ == "__main__":
     main()
